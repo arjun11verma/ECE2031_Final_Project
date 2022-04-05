@@ -135,9 +135,20 @@ Forever:
 	JUMP   Forever      ; Do this forever.
 	DEAD:  DW &HDEAD    ; Example of a "local" variable
 
-	
 ;***************************************************************
-;* Subroutines
+;* User Defined Subroutines
+;***************************************************************
+
+; Subroutine to move the amount of units stored in the AC
+MoveACUnits:
+	JUMP	MoveACUnits
+
+; Subroutine to turn to the angle stored in AC
+TurnACDegreees:
+	JUMP	TurnACDegreees
+		
+;***************************************************************
+;* Predefined Subroutines
 ;***************************************************************
 
 ; Subroutine to wait (block) for 1 second
@@ -276,7 +287,7 @@ RMid:     DW -350
 FFast:    DW 500       ; 500 is almost max speed (511 is max)
 RFast:    DW -500
 
-MinBatt:  DW 140       ; 14.0V - minimum safe battery voltage
+MinBatt:  DW 100       ; 10.0V - minimum safe battery voltage
 I2CWCmd:  DW &H1190    ; write one i2c byte, read one byte, addr 0x90
 I2CRCmd:  DW &H0190    ; write nothing, read one byte, addr 0x90
 
