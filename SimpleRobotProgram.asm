@@ -38,8 +38,6 @@ WaitForSafety:
 	SHIFT  8           ; Shift over to LED17
 	OUT    XLEDS       ; LED17 blinks at 2.5Hz (10Hz/4)
 	JUMP   WaitForSafety
-
-; penis
 	
 WaitForUser:
 	; This loop will wait for the user to press PB3, to ensure that
@@ -65,64 +63,17 @@ WaitForUser:
 ;***************************************************************
 Main: ; "Real" program starts here.
 	OUT    RESETPOS    ; reset odometer in case wheels moved after programming	
+	; Coordinate units are feet!
+	
+	LOAD	Deg90
+	CALL	TurnACDegrees
+	CALL	Stall
+	LOAD	Deg90
+	CALL	TurnACDegrees
+	CALL	Stall
+	LOAD	Deg90
+	CALL	TurnACDegrees
 
-; The following code ("GetAngle" through "DeadZone") is purely for example.
-; It attempts to gently keep the robot facing 0 degrees, showing how the
-; odometer and motor controllers work.
-GetAngle:
-	; The 0/359 jump in THETA can be difficult to deal with.
-	; This code shows one way to handle it: by converting it
-	; to a +/-180 offset from heading 0.
-	IN     THETA       ; get the current angular position
-	ADDI   -180        ; test whether facing 0-179 or 180-359
-	JPOS   NegAngle    ; robot facing 180-360; handle that separately
-PosAngle:
-	ADDI   180         ; undo previous subtraction
-	JUMP   CheckAngle  ; THETA positive, so carry on
-NegAngle:
-	ADDI   -180        ; finish conversion to negative angle:
-	                   ;  angles 180 to 359 become -180 to -1
-	
-CheckAngle:
-	; AC now contains the +/- angular difference from 0
-	OUT    LCD         ; Good data to display for debugging
-	JPOS   TurnRight   ; handle +/- separately
-TurnLeft:
-	; If the angle is small, we don't want to do anything.
-	ADD    DeadZone
-	JPOS   NoTurn
-	; otherwise, turn CCW
-	LOAD   RSlow
-	JUMP   SendToMotors
-TurnRight:
-	SUB    DeadZone    ; if near 0, don't turn
-	JNEG   NoTurn
-	LOAD   FSlow
-	JUMP   SendToMotors
-NoTurn:
-	LOADI  0           ; new LOADI instruction
-	JUMP   SendToMotors
-	
-DeadZone:  DW 5        ; Note that you can place data anywhere.
-                       ; Just be careful that it doesn't get executed.
-	
-SendToMotors:
-	; Since we want to spin in place, we need to send inverted
-	;  velocities to the wheels.  The speed in AC is used for
-	;  the left wheel, and its negative is used for the right wheel
-	STORE  Temp        ; store calculated desired velocity
-	; send the direct value to the left wheel
-	OUT    LVELCMD
-	OUT    SSEG1       ; for debugging purposes
-	; send the negated number to the right wheel
-	LOADI  0
-	SUB    Temp        ; AC = 0 - velocity
-	OUT    RVELCMD	
-	OUT    SSEG2       ; debugging
-	
-	JUMP   GetAngle    ; repeat forever
-
-	
 Die:
 ; Sometimes it's useful to permanently stop execution.
 ; This will also catch the execution if it accidentally
@@ -141,19 +92,50 @@ Forever:
 ;* User Defined Subroutines
 ;***************************************************************
 
+; Subroutine to stall until button is pressed
+Stall:
+	STORE	temp
+StallLoop:
+	IN		XIO
+	AND		Mask2
+	JPOS	StallLoop
+	LOAD	temp
+	RETURN
+
 ; Subroutine to move the amount of units stored in the AC
 MoveACUnits:
+	STORE	Distance
+	IN		LPOS
+	STORE	StartPosL
+	IN		RPOS
+	STORE	StartPosR
+	
 CheckDir:
+	LOAD	Distance
+	JNEG	Reverse
+
+Forward:
 	LOAD	FFast
 	STORE	MoveACUnits_RSpeed
 	STORE	MoveACUnits_LSpeed
+	JUMP	CheckCurPos
 
-CheckCurPos:
+Reverse:
+	LOAD	RFast
+	STORE	MoveACUnits_RSpeed
+	STORE	MoveACUnits_LSpeed
+
+CheckCurPos: ; for now just check left, maybe do both later
 	IN		LPOS
+	OUT		LCD
+	SUB		StartPosL
+	SUB		Distance
+	JPOS	StopMotion
 
-ContinueMotion:
-	LOAD	MoveACUnits_Speed
+ContinueMotion: ; add the motion correction here based off of position
+	LOAD	MoveACUnits_LSpeed
 	OUT		LVELCMD
+	LOAD	MoveACUnits_RSpeed
 	OUT		RVELCMD
 	JUMP	CheckCurPos
 
@@ -163,15 +145,82 @@ StopMotion:
 	OUT		RVELCMD
 	
 	RETURN
-
+	
 ; Subroutine to turn to the angle stored in AC
-TurnACDegreees:
-	JUMP	TurnACDegreees
+TurnACDegrees:
+	STORE	Distance
+	IN		THETA
+	OUT		LCD
+	ADD		Distance
+	OUT		LCD
+	CALL	Mod360
+	OUT		LCD
+	STORE	AngleGoal
+	
+CheckAngDir:
+	LOAD	Distance
+	JNEG	CCW
+
+CW:
+	LOAD	RSlow
+	STORE	MoveACUnits_RSpeed
+	LOAD	FSlow
+	STORE	MoveACUnits_LSpeed
+	JUMP	CheckCurTheta
+
+CCW:
+	LOAD	RSlow
+	STORE	MoveACUnits_LSpeed
+	LOAD	FSlow
+	STORE	MoveACUnits_RSpeed
+
+CheckCurTheta:
+	IN		THETA
+	OUT		LCD
+	
+	SUB		AngleGoal
+	CALL	Abs
+	SUB		Three
+	JNEG	StopRotation
+	
+ContinueRotation:
+	LOAD	MoveACUnits_LSpeed
+	OUT		LVELCMD
+	LOAD	MoveACUnits_RSpeed
+	OUT		RVELCMD
+	JUMP	CheckCurTheta
+
+StopRotation:
+	LOAD	Zero
+	OUT		LVELCMD
+	OUT		RVELCMD
+	
 	RETURN
 		
 ;***************************************************************
 ;* Predefined Subroutines
 ;***************************************************************
+; Subroutine to mod the value in AC by 360
+Mod360:
+	JNEG   Mod360n      ; handle negatives
+Mod360p:
+	ADDI   -360
+	JPOS   Mod360p      ; subtract 180 until negative
+	ADDI   360          ; go back positive
+	RETURN
+Mod360n:
+	ADDI   360          ; add 180 until positive
+	JNEG   Mod360n
+	ADDI   -360         ; go back negative
+	RETURN
+	
+; Subroutine to take abs(AC) and store in AC
+Abs:
+	JPOS   Abs_r
+	XOR    NegOne       ; Flip all bits
+	ADDI   1            ; Add one (i.e. negate number)
+Abs_r:
+	RETURN
 
 ; Subroutine to wait (block) for 1 second
 Wait1:
@@ -265,6 +314,10 @@ MoveACUnits_RSpeed:	DW 0
 MoveACUnits_LSpeed:	DW 0
 StartPosL:	DW 0
 StartPosR:	DW 0
+Distance:	DW 0
+StartTheta:	DW 0
+AngleGoal:	DW 0
+temp:		DW 0
 
 ;***************************************************************
 ;* Constants
