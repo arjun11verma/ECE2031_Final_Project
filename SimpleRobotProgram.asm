@@ -141,11 +141,31 @@ Forever:
 
 ; Subroutine to move the amount of units stored in the AC
 MoveACUnits:
-	JUMP	MoveACUnits
+CheckDir:
+	LOAD	FFast
+	STORE	MoveACUnits_RSpeed
+	STORE	MoveACUnits_LSpeed
+
+CheckCurPos:
+	IN		LPOS
+
+ContinueMotion:
+	LOAD	MoveACUnits_Speed
+	OUT		LVELCMD
+	OUT		RVELCMD
+	JUMP	CheckCurPos
+
+StopMotion:
+	LOAD	Zero
+	OUT		LVELCMD
+	OUT		RVELCMD
+	
+	RETURN
 
 ; Subroutine to turn to the angle stored in AC
 TurnACDegreees:
 	JUMP	TurnACDegreees
+	RETURN
 		
 ;***************************************************************
 ;* Predefined Subroutines
@@ -239,7 +259,10 @@ I2CError:
 ;***************************************************************
 ;* Variables
 ;***************************************************************
-Temp:     DW 0 ; "Temp" is not a great name, but can be useful
+MoveACUnits_RSpeed:	DW 0
+MoveACUnits_LSpeed:	DW 0
+StartPosL:	DW 0
+StartPosR:	DW 0
 
 ;***************************************************************
 ;* Constants
