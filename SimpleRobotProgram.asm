@@ -38,6 +38,8 @@ WaitForSafety:
 	SHIFT  8           ; Shift over to LED17
 	OUT    XLEDS       ; LED17 blinks at 2.5Hz (10Hz/4)
 	JUMP   WaitForSafety
+
+; penis
 	
 WaitForUser:
 	; This loop will wait for the user to press PB3, to ensure that
