@@ -62,18 +62,102 @@ WaitForUser:
 ;* Main code
 ;***************************************************************
 Main: ; "Real" program starts here.
-	OUT    RESETPOS    ; reset odometer in case wheels moved after programming	
+	OUT    RESETPOS    ; reset odometer in case wheels moved after programming
 	; Coordinate units are feet!
-	
-	LOAD	Deg90
-	CALL	TurnACDegrees
-	CALL	Stall
-	LOAD	Deg90
-	CALL	TurnACDegrees
-	CALL	Stall
-	LOAD	Deg90
-	CALL	TurnACDegrees
 
+LoadPosition:
+ 	IN	    XPOS
+ 	STORE	CurXPos
+ 	
+ 	IN	    YPOS
+ 	STORE	CurYPos
+ 	
+ 	OUT		LCD
+ 	CALL	Stall
+	
+SetupMinDistanceLoop:
+	LOAD	Zero
+	STORE	XIdx
+	STORE	YIdx
+	
+	LOAD	GigaMax
+	STORE	MinDistance
+	
+MinDistanceLoop:
+	LOAD	XIdx
+	CALL	LoadXCoord
+	
+	SUB		CurXPos
+	STORE	L2X
+	
+	LOAD	YIdx
+	CALL	LoadYCoord
+	
+	SUB		CurYPos
+	STORE	L2Y
+	
+	CALL	L2Estimate
+	STORE	distance
+	
+	SUB		MinDistance
+	
+	JPOS	ContinueDistanceLoop
+
+UpdateMinDistance:
+	LOAD	distance
+	STORE	MinDistance
+	
+	LOAD	XIdx
+	STORE	MinDex
+	
+	LOAD	L2X
+	STORE	AtanX
+	
+	LOAD	L2Y
+	STORE	AtanY
+	
+	CALL	Atan2
+	STORE	MinAngle
+	
+ContinueDistanceLoop:
+	LOAD	XIdx
+	ADD		One
+	STORE	XIdx
+	
+	LOAD	YIdx
+	ADD		One
+	STORE	YIdx
+	
+	SUB		Two
+	JNEG	MinDistanceLoop
+
+MoveRobot:
+	CALL	Wait1
+	
+	LOAD	MinAngle
+	
+	OUT		LCD
+	CALL	Wait1
+	
+	ADD		DegN90
+	CALL    TurnACDegrees
+	
+	LOAD	MinDistance
+	OUT		LCD
+	CALL	Wait1
+	CALL	MoveACUnits
+	
+	LOAD	MinDex
+	CALL	ResetXY
+	
+	LOAD	NumMovements
+	ADD		One
+	STORE	NumMovements
+	SUB		One
+	JPOS	Die
+	
+	JUMP	LoadPosition
+	
 Die:
 ; Sometimes it's useful to permanently stop execution.
 ; This will also catch the execution if it accidentally
@@ -148,70 +232,277 @@ StopMotion:
 	
 ; Subroutine to turn to the angle stored in AC
 TurnACDegrees:
-	STORE	Distance
-	IN		THETA
-	OUT		LCD
-	ADD		Distance
-	OUT		LCD
-	CALL	Mod360
-	OUT		LCD
-	STORE	AngleGoal
+	STORE  DesTheta   ; store the turning angle
+	IN	   NowTheta
+	STORE  NowTheta
 	
-CheckAngDir:
-	LOAD	Distance
-	JNEG	CCW
-
-CW:
-	LOAD	RSlow
-	STORE	MoveACUnits_RSpeed
-	LOAD	FSlow
-	STORE	MoveACUnits_LSpeed
-	JUMP	CheckCurTheta
-
-CCW:
-	LOAD	RSlow
-	STORE	MoveACUnits_LSpeed
-	LOAD	FSlow
-	STORE	MoveACUnits_RSpeed
-
-CheckCurTheta:
-	IN		THETA
-	OUT		LCD
+	SUB    DesTheta    ; subtract desired angle
+	CALL   Mod360      ; remove negative numbers
+	ADD    DegN180     ; test which semicircle error is in
+	JPOS   NeedLeft    ; >180 means need left turn
+	JUMP   NeedRight   ; otherwise, need right turn
+NeedLeft:
+	IN	   THETA
+	STORE  NowTheta    ; update current theta
 	
-	SUB		AngleGoal
-	CALL	Abs
-	SUB		Three
-	JNEG	StopRotation
-	
-ContinueRotation:
-	LOAD	MoveACUnits_LSpeed
-	OUT		LVELCMD
-	LOAD	MoveACUnits_RSpeed
-	OUT		RVELCMD
-	JUMP	CheckCurTheta
+	OUT	   LCD
 
-StopRotation:
-	LOAD	Zero
-	OUT		LVELCMD
-	OUT		RVELCMD
+	LOAD   DesTheta
+	SUB    NowTheta    ; get the turn error
+	CALL   Mod360      ; fix errors around 0
+	SUB    DeadZone
+	JNEG   NoTurn      ; stop moving if close
+TurnLeft:
+	LOAD   FSlow         ; replace the 100 from before
+	OUT    RVELCMD     ; set right wheel forward
+	LOAD   RSlow 
+	OUT    LVELCMD     ; set left wheel backwards
+	JUMP   NeedLeft
+	RETURN               ; exit ISR
 	
+NeedRight:
+	IN	   THETA
+	STORE  NowTheta
+	
+	OUT	   LCD
+	
+	LOAD   NowTheta
+	SUB    DesTheta    ; get the turn error
+	CALL   Mod360      ; fix errors around 0
+	SUB    DeadZone
+	JNEG   NoTurn      ; stop moving if close
+TurnRight:
+	LOAD   RSlow         ; replace the 100 from before
+	OUT    RVELCMD     ; set right wheel backwards
+	LOAD   FSlow 
+	OUT    LVELCMD     ; set left wheel forward
+	JUMP   NeedRight
+	RETURN             ; exit ISR
+	
+NoTurn:
+	LOAD   Zero
+	OUT    LVELCMD
+	OUT    RVELCMD
+	RETURN
+
+; Reset the input coordinates 
+ResetXY:
+	STORE  temp
+	LOAD   XCoords
+	ADD	   temp
+	STORE  temp2
+	LOAD   GigaMax
+	ISTORE temp2
+	
+	STORE  temp
+	LOAD   YCoords
+	ADD	   temp
+	STORE  temp2
+	LOAD   GigaMax
+	ISTORE temp2
+	
+	RETURN
+
+; Subroutine to load X coordinate at index in AC into AC
+LoadXCoord:
+	STORE  temp
+	LOAD   XCoords
+	ADD	   temp
+	STORE  temp
+	ILOAD  temp
+	RETURN
+
+; Subroutine to load Y coordinate at index in AC into AC
+LoadYCoord:
+	STORE  temp
+	LOAD   YCoords
+	ADD	   temp
+	STORE  temp
+	ILOAD  temp
+	RETURN
+
+; Subroutine to load X coordinate at index in AC into AC
+StoreXCoord:
+	STORE  temp
+	LOAD   XCoords
+	ADD	   temp
+	STORE  temp
+	ISTORE temp
+	RETURN
+
+; Subroutine to load Y coordinate at index in AC into AC
+StoreYCoord:
+	STORE  temp
+	LOAD   YCoords
+	ADD	   temp
+	STORE  temp
+	ISTORE temp
 	RETURN
 		
 ;***************************************************************
 ;* Predefined Subroutines
 ;***************************************************************
+
+; Subroutine to calculate arctan
+Atan2:
+	LOAD   AtanY
+	CALL   Abs          ; abs(y)
+	STORE  AtanT
+	LOAD   AtanX        ; abs(x)
+	CALL   Abs
+	SUB    AtanT        ; abs(x) - abs(y)
+	JNEG   A2_sw        ; if abs(y) > abs(x), switch arguments.
+	LOAD   AtanX        ; Octants 1, 4, 5, 8
+	JNEG   A2_R3
+	CALL   A2_calc      ; Octants 1, 8
+	JNEG   A2_R1n
+	RETURN              ; Return raw value if in octant 1
+A2_R1n: ; region 1 negative
+	ADD    Deg360          ; Add 360 if we are in octant 8
+	RETURN
+A2_R3: ; region 3
+	CALL   A2_calc      ; Octants 4, 5            
+	ADD    Deg180          ; theta' = theta + 180
+	RETURN
+A2_sw: ; switch arguments; octants 2, 3, 6, 7 
+	LOAD   AtanY        ; Swap input arguments
+	STORE  AtanT
+	LOAD   AtanX
+	STORE  AtanY
+	LOAD   AtanT
+	STORE  AtanX
+	JPOS   A2_R2        ; If Y positive, octants 2,3
+	CALL   A2_calc      ; else octants 6, 7
+	XOR    NegOne
+	ADD    One            ; negate the angle
+	ADD    Deg270          ; theta' = 270 - theta
+	RETURN
+A2_R2: ; region 2
+	CALL   A2_calc      ; Octants 2, 3
+	XOR    NegOne
+	ADD    One            ; negate the angle
+	ADD    Deg90           ; theta' = 90 - theta
+	RETURN
+A2_calc:
+	; calculates R/(1 + 0.28125*R^2)
+	LOAD   AtanY
+	STORE  d16sN        ; Y in numerator
+	LOAD   AtanX
+	STORE  d16sD        ; X in denominator
+	CALL   A2_div       ; divide
+	LOAD   dres16sQ     ; get the quotient (remainder ignored)
+	STORE  AtanRatio
+	STORE  m16sA
+	STORE  m16sB
+	CALL   A2_mult      ; X^2
+	STORE  m16sA
+	LOAD   A2c
+	STORE  m16sB
+	CALL   A2_mult
+	ADD    Val256          ; 256/256+0.28125X^2
+	STORE  d16sD
+	LOAD   AtanRatio
+	STORE  d16sN        ; Ratio in numerator
+	CALL   A2_div       ; divide
+	LOAD   dres16sQ     ; get the quotient (remainder ignored)
+	STORE  m16sA        ; <= result in radians
+	LOAD   A2cd         ; degree conversion factor
+	STORE  m16sB
+	CALL   A2_mult      ; convert to degrees
+	STORE  AtanT
+	SHIFT  -7           ; check 7th bit
+	AND    One
+	JZERO  A2_rdwn      ; round down
+	LOAD   AtanT
+	SHIFT  -8
+	ADD    One            ; round up
+	RETURN
+A2_rdwn:
+	LOAD   AtanT
+	SHIFT  -8           ; round down
+	RETURN
+A2_mult: ; multiply, and return bits 23..8 of result
+	CALL   Mult16s
+	LOAD   mres16sH
+	SHIFT  8            ; move high word of result up 8 bits
+	STORE  mres16sH
+	LOAD   mres16sL
+	SHIFT  -8           ; move low word of result down 8 bits
+	AND    LowByte
+	OR     mres16sH     ; combine high and low words of result
+	RETURN
+A2_div: ; 16-bit division scaled by 256, minimizing error
+	LOAD  Nine            ; loop 8 times (256 = 2^8)
+	STORE  AtanT
+A2_DL:
+	LOAD   AtanT
+	ADD    NegOne
+	JPOS   A2_DN        ; not done; continue shifting
+	CALL   Div16s       ; do the standard division
+	RETURN
+A2_DN:
+	STORE  AtanT
+	LOAD   d16sN        ; start by trying to scale the numerator
+	SHIFT  1
+	XOR    d16sN        ; if the sign changed,
+	JNEG   A2_DD        ; switch to scaling the denominator
+	XOR    d16sN        ; get back shifted version
+	STORE  d16sN
+	JUMP   A2_DL
+A2_DD:
+	LOAD   d16sD
+	SHIFT  -1           ; have to scale denominator
+	STORE  d16sD
+	JUMP   A2_DL
+
+; Subroutine to multiply by 16
+Mult16s:
+	LOAD  Zero
+	STORE  m16sc        ; clear carry
+	STORE  mres16sH     ; clear result
+	LOAD  Sixteen       ; load 16 to counter
+Mult16s_loop:
+	STORE  mcnt16s      
+	LOAD   m16sc        ; check the carry (from previous iteration)
+	JZERO  Mult16s_noc  ; if no carry, move on
+	LOAD   mres16sH     ; if a carry, 
+	ADD    m16sA        ; add multiplicand to result H
+	STORE  mres16sH
+Mult16s_noc: ; no carry
+	LOAD   m16sB
+	AND    One          ; check bit 0 of multiplier
+	STORE  m16sc        ; save as next carry
+	JZERO  Mult16s_sh   ; if no carry, move on to shift
+	LOAD   mres16sH     ; if bit 0 set,
+	SUB    m16sA        ; subtract multiplicand from result H
+	STORE  mres16sH
+Mult16s_sh:
+	LOAD   m16sB
+	SHIFT  -1           ; shift result L >>1
+	AND    c7FFF        ; clear msb
+	STORE  m16sB
+	LOAD   mres16sH     ; load result H
+	SHIFT  15           ; move lsb to msb
+	OR     m16sB
+	STORE  m16sB        ; result L now includes carry out from H
+	LOAD   mres16sH
+	SHIFT  -1
+	STORE  mres16sH     ; shift result H >>1
+	LOAD   mcnt16s
+	ADD    NegOne           ; check counter
+	JPOS   Mult16s_loop ; need to iterate 16 times
+	LOAD   m16sB
+	STORE  mres16sL     ; multiplier and result L shared a word
+	RETURN              ; Done
+
 ; Subroutine to mod the value in AC by 360
 Mod360:
-	JNEG   Mod360n      ; handle negatives
-Mod360p:
-	ADDI   -360
-	JPOS   Mod360p      ; subtract 180 until negative
-	ADDI   360          ; go back positive
-	RETURN
-Mod360n:
-	ADDI   360          ; add 180 until positive
-	JNEG   Mod360n
-	ADDI   -360         ; go back negative
+	JNEG   M360N       ; loop exit condition
+	ADD    Neg360        ; start removing 360 at a time
+	JUMP   Mod360      ; keep going until negative
+M360N:
+	ADD    Deg360         ; get back to positive
+	JNEG   M360N       ; (keep adding 360 until non-negative)
 	RETURN
 	
 ; Subroutine to take abs(AC) and store in AC
@@ -224,6 +515,7 @@ Abs_r:
 
 ; Subroutine to wait (block) for 1 second
 Wait1:
+	STORE  temp
 	OUT    TIMER
 Wloop:
 	IN     LIN
@@ -232,6 +524,113 @@ Wloop:
 	OUT    XLEDS       ; User-feedback that a pause is occurring.
 	ADDI   -10         ; 1 second in 10Hz.
 	JNEG   Wloop
+	LOAD   temp
+	RETURN
+
+; Subroutine to calculate distance
+L2Estimate:
+	; take abs() of each value, and find the largest one
+	LOAD   L2X
+	CALL   Abs
+	STORE  L2T1
+	LOAD   L2Y
+	CALL   Abs
+	SUB    L2T1
+	JNEG   GDSwap    ; swap if needed to get largest value in X
+	ADD    L2T1
+CalcDist:
+	; Calculation is max(X,Y)*0.961+min(X,Y)*0.406
+	STORE  m16sa
+	LOAD   twofoursix       ; max * 246
+	STORE  m16sB
+	CALL   Mult16s
+	LOAD   mres16sH
+	SHIFT  8
+	STORE  L2T2
+	LOAD   mres16sL
+	SHIFT  -8        ; / 256
+	AND    LowByte
+	OR     L2T2
+	STORE  L2T3
+	LOAD   L2T1
+	STORE  m16sa
+	LOAD   onezerofour       ; min * 104
+	STORE  m16sB
+	CALL   Mult16s
+	LOAD   mres16sH
+	SHIFT  8
+	STORE  L2T2
+	LOAD   mres16sL
+	SHIFT  -8        ; / 256
+	AND    LowByte
+	OR     L2T2
+	ADD    L2T3     ; sum
+	RETURN
+GDSwap: ; swaps the incoming X and Y
+	ADD    L2T1
+	STORE  L2T2
+	LOAD   L2T1
+	STORE  L2T3
+	LOAD   L2T2
+	STORE  L2T1
+	LOAD   L2T3
+	JUMP   CalcDist
+	
+; Division Subroutine
+Div16s:
+	LOAD  Zero
+	STORE  dres16sR     ; clear remainder result
+	STORE  d16sC1       ; clear carry
+	LOAD   d16sN
+	XOR    d16sD
+	STORE  d16sS        ; sign determination = N XOR D
+	LOAD   Seventeen
+	STORE  d16sT        ; preload counter with 17 (16+1)
+	LOAD   d16sD
+	CALL   Abs          ; take absolute value of denominator
+	STORE  d16sD
+	LOAD   d16sN
+	CALL   Abs          ; take absolute value of numerator
+	STORE  d16sN
+Div16s_loop:
+	LOAD   d16sN
+	SHIFT  -15          ; get msb
+	AND    One          ; only msb (because shift is arithmetic)
+	STORE  d16sC2       ; store as carry
+	LOAD   d16sN
+	SHIFT  1            ; shift <<1
+	OR     d16sC1       ; with carry
+	STORE  d16sN
+	LOAD   d16sT
+	ADDI   -1           ; decrement counter
+	JZERO  Div16s_sign  ; if finished looping, finalize result
+	STORE  d16sT
+	LOAD   dres16sR
+	SHIFT  1            ; shift remainder
+	OR     d16sC2       ; with carry from other shift
+	SUB    d16sD        ; subtract denominator from remainder
+	JNEG   Div16s_add   ; if negative, need to add it back
+	STORE  dres16sR
+	LOAD   One
+	STORE  d16sC1       ; set carry
+	JUMP   Div16s_loop
+Div16s_add:
+	ADD    d16sD        ; add denominator back in
+	STORE  dres16sR
+	LOAD   Zero
+	STORE  d16sC1       ; clear carry
+	JUMP   Div16s_loop
+Div16s_sign:
+	LOAD   d16sN
+	STORE  dres16sQ     ; numerator was used to hold quotient result
+	LOAD   d16sS        ; check the sign indicator
+	JNEG   Div16s_neg
+	RETURN
+Div16s_neg:
+	LOAD   dres16sQ     ; need to negate the result
+	XOR    NegOne
+	ADDI   1
+	STORE  dres16sQ
 	RETURN
 
 ; This subroutine will get the battery voltage,
@@ -310,14 +709,72 @@ I2CError:
 ;***************************************************************
 ;* Variables
 ;***************************************************************
+; General
+temp2:  DW 0
+moveangle: DW 0
+movedistance: DW 0
+NumMovements: DW 0
+
+; Movement Function
 MoveACUnits_RSpeed:	DW 0
 MoveACUnits_LSpeed:	DW 0
 StartPosL:	DW 0
 StartPosR:	DW 0
 Distance:	DW 0
-StartTheta:	DW 0
-AngleGoal:	DW 0
+
+; Turning Function
+TurnAngle:	DW 0
 temp:		DW 0
+DesTheta:	DW 0
+NowTheta: DW 0
+DeadZone: DW 3
+TCount: DW 0
+
+; Distance Calculation
+L2X:  DW 0
+L2Y:  DW 0
+L2T1: DW 0
+L2T2: DW 0
+L2T3: DW 0
+
+; Multiplication
+c7FFF: DW &H7FFF
+m16sA: DW 0 ; multiplicand
+m16sB: DW 0 ; multipler
+m16sc: DW 0 ; carry
+mcnt16s: DW 0 ; counter
+mres16sL: DW 0 ; result low
+mres16sH: DW 0 ; result high
+
+; arctan calculation
+AtanX:      DW 0
+AtanY:      DW 0
+AtanRatio:  DW 0        ; =y/x
+AtanT:      DW 0        ; temporary value
+A2c:        DW 72       ; 72/256=0.28125, with 8 fractional bits
+A2cd:       DW 14668    ; = 180/pi with 8 fractional bits
+
+; Division
+d16sN: DW 0 ; numerator
+d16sD: DW 0 ; denominator
+d16sS: DW 0 ; sign value
+d16sT: DW 0 ; temp counter
+d16sC1: DW 0 ; carry value
+d16sC2: DW 0 ; carry value
+dres16sQ: DW 0 ; quotient result
+dres16sR: DW 0 ; remainder result
+
+; GPTP Algorithm
+MinDistance: DW 2000
+MinDex:	 DW 0
+MinAngle: DW 0
+CurXPos: DW 0
+CurYPos: DW 0
+XIdx:   DW 0
+YIdx:   DW 0
+
+XCoords:    DW 2000
+YCoords:	DW 2004
 
 ;***************************************************************
 ;* Constants
@@ -335,6 +792,23 @@ Seven:    DW 7
 Eight:    DW 8
 Nine:     DW 9
 Ten:      DW 10
+
+Neg45:		DW -45
+NegEleven:	DW -11
+negfive:	DW -5
+NegOneHalf:	DW -.5
+OneHalf:	DW .5
+Eleven:	  DW 11
+Sixteen:	  DW 16
+Seventeen: DW 17
+FortyFive:	DW 45
+Fifty:	  DW 50
+OneHundred:	DW 100
+onezerofour: DW 104
+twofoursix: DW 246
+yintercept:	DW 1480
+Neg360:	DW -360
+Val256: DW 256
 
 ; Some bit masks.
 ; Masks of multiple bits can be constructed by ORing these
@@ -355,7 +829,9 @@ OneMeter: DW 961       ; ~1m in 1.04mm units
 HalfMeter: DW 481      ; ~0.5m in 1.04mm units
 TwoFeet:  DW 586       ; ~2ft in 1.04mm units
 Deg90:    DW 90        ; 90 degrees in odometer units
+DegN90:   DW -90        ; 90 degrees in odometer units
 Deg180:   DW 180       ; 180
+DegN180:  DW -180      ; -180
 Deg270:   DW 270       ; 270
 Deg360:   DW 360       ; can never actually happen; for math only
 FSlow:    DW 100       ; 100 is about the lowest velocity value that will move
@@ -364,6 +840,7 @@ FMid:     DW 350       ; 350 is a medium speed
 RMid:     DW -350
 FFast:    DW 500       ; 500 is almost max speed (511 is max)
 RFast:    DW -500
+GigaMax:  DW 20000
 
 MinBatt:  DW 100       ; 10.0V - minimum safe battery voltage
 I2CWCmd:  DW &H1190    ; write one i2c byte, read one byte, addr 0x90
@@ -411,3 +888,13 @@ THETA:    EQU &HC2  ; Current rotational position of robot (0-359)
 RESETPOS: EQU &HC3  ; write anything here to reset odometry to 0
 RIN:      EQU &HC8
 LIN:      EQU &HC9
+
+ORG 2000
+DW 212 ; X Coords
+DW 335
+DW 514
+DW 234
+DW 356 ; Y Coords
+DW 419
+DW 503
+DW 320
