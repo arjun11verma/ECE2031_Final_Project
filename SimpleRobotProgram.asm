@@ -266,10 +266,46 @@ MoveACUnits_LSpeed:	DW 0
 StartPosL:	DW 0
 StartPosR:	DW 0
 
+;***********
+;Coordinate entry code
+;***********
+StartLoading:
+	LOADI	0
+	OUT 	BEEP
+	CALL	LoadingVals
+	
+LoadingVals:
+	IN		XIO
+	AND     Mask1	; PB2
+	LOAD	temp
+	OUT		LCD
+	LOAD	0
+	JPOS    LoadingVals		; was it pressed?
+	ADD		One
+	OUT		LCD
+	JUMP	LoadingVals
+	AND		Mask1	; PB3
+	JPOS    LoadingVals
+	OUT		LCD
+	LOAD	temp	; or is it STORE?
+	
+WeMadeIt:
+	LOAD	XIdx
+	OUT		LCD
+	OUT		BEEP
+	
+
+	
+
+
 ;***************************************************************
 ;* Constants
 ;* (though there is nothing stopping you from writing to these)
 ;***************************************************************
+
+;array XCOOR 12 DB 0
+;array YCOOR 12 DB 0
+
 NegOne:   DW -1
 Zero:     DW 0
 One:      DW 1
@@ -298,6 +334,10 @@ LowByte:  DW &HFF      ; binary 00000000 1111111
 LowNibl:  DW &HF       ; 0000 0000 0000 1111
 
 ; some useful movement values
+
+Leeway:	DW 10		; radius allowed around exact X,Y coordinate
+					; to display message (can make bigger LOL)
+
 OneMeter: DW 961       ; ~1m in 1.04mm units
 HalfMeter: DW 481      ; ~0.5m in 1.04mm units
 TwoFeet:  DW 586       ; ~2ft in 1.04mm units
