@@ -272,7 +272,7 @@ StartPosR:	DW 0
 StartLoading:
 	LOADI	0
 	OUT 	BEEP
-	CALL	LoadingVals
+	CALL	LoadingVals ;need to finish this off dummty (JFKLJKLSNAKLDNKFHEIF ATTENTION)
 	
 LoadingVals:
 	IN		XIO
