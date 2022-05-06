@@ -62,18 +62,142 @@ WaitForUser:
 ;* Main code
 ;***************************************************************
 Main: ; "Real" program starts here.
-	OUT    RESETPOS    ; reset odometer in case wheels moved after programming
+	OUT     RESETPOS    ; reset odometer in case wheels moved after programming
 	; Coordinate units are feet!
+	LOAD	Zero
+	STORE	XIdx
+	STORE	YIdx
 
+; Coordinate Reading Begins
+CoordBegin:
+	LOADI -5
+	STORE temp 
+	
+Funk:
+	LOAD   temp
+	SUB    Five
+	JZERO  Displaytemp
+	JNEG   Displaytemp
+	LOADI  -5
+	STORE  temp
+Displaytemp:
+	LOAD   temp 
+	OUT    LCD
+	IN      XIO
+	AND     Mask1
+	JZERO   AllowToStore
+	IN     XIO 
+	AND    Mask0
+	JPOS   Funk
+	JUMP   Pressed
+	OUT    XLEDS
+
+	IN     XIO
+	AND    Mask1
+	JPOS   Funk
+	LOADI  0
+	STORE  temp
+	JPOS   Funk
+
+	IN     XIO
+	AND    Mask1
+	JZERO  Funk ; might have to check this after the zero check on PB2 (next round of testing)
+	JPOS   Funk
+	OUT    XLEDS
+	LOADI  0
+	STORE  temp
+	JUMP   Funk
+  
+Pressed:
+  	IN     XIO 
+  	AND    Mask0
+  	JZERO   Pressed
+  
+Increment:   
+	LOAD   temp
+	ADD    One
+	STORE  temp
+	OUT    LCD
+	IN      XIO
+	AND     Mask1
+	JZERO   AllowToStore
+  	JUMP   Funk
+  
+  
+AllowToStore:
+	IN      XIO
+	AND     Mask1
+	JPOS    StartStore 
+	JUMP    AllowToStore
+	
+StartStore:
+	LOAD	temp
+	STORE	m16sA
+	LOAD	OneFoot
+	STORE	m16sB
+	CALL	Mult16s
+	LOAD	mres16sL
+	STORE	temp
+
+	LOAD	XIdx
+	SUB		Eleven
+	JPOS	StoreY
+
+StoreX:
+	LOAD    temp
+	CALL	StoreXCoord
+	LOAD	XIdx
+	ADD		One
+	STORE	XIdx
+	STORE	ActiveLoadIdx
+	JUMP	EndStoreCheck
+
+StoreY:
+	LOAD    temp
+	CALL	StoreYCoord
+	LOAD	YIdx
+	ADD		One
+	STORE	YIdx
+	STORE	ActiveLoadIdx
+
+EndStoreCheck:
+	LOAD	YIdx
+	SUB		Eleven
+	JPOS	DisplayPoints
+	
+	LOAD	ActiveLoadIdx
+	SUB		Eleven
+	JPOS	CleanupY
+	JUMP	DisplayVal
+	
+CleanupY:
+	LOAD	Zero
+	STORE	ActiveLoadIdx
+	
+DisplayVal:
+	LOAD	ActiveLoadIdx
+	OUT		SSEG1
+	
+	LOAD	temp
+	OUT     SSEG2
+
+	JUMP	CoordBegin
+; Coordinate Reading Over
+
+DisplayPoints:
+	CALL	Wait1
+	LOAD	Zero
+	STORE	XIdx
+	STORE	YIdx
+
+; Coords Confirmed
+	
 LoadPosition:
  	IN	    XPOS
  	STORE	CurXPos
  	
  	IN	    YPOS
  	STORE	CurYPos
- 	
- 	OUT		LCD
- 	CALL	Stall
 	
 SetupMinDistanceLoop:
 	LOAD	Zero
@@ -98,7 +222,6 @@ MinDistanceLoop:
 	
 	CALL	L2Estimate
 	STORE	distance
-	
 	SUB		MinDistance
 	
 	JPOS	ContinueDistanceLoop
@@ -128,33 +251,33 @@ ContinueDistanceLoop:
 	ADD		One
 	STORE	YIdx
 	
-	SUB		Two
+	SUB		Twelve
 	JNEG	MinDistanceLoop
 
 MoveRobot:
-	CALL	Wait1
-	
 	LOAD	MinAngle
-	
-	OUT		LCD
-	CALL	Wait1
-	
-	ADD		DegN90
-	CALL    TurnACDegrees
+	CALL    TurnACDegrees ; Turn to correct angle
 	
 	LOAD	MinDistance
-	OUT		LCD
-	CALL	Wait1
-	CALL	MoveACUnits
+	CALL	MoveACUnits ; Move the correct amount
+	
+	LOAD	One
+	OUT 	BEEP
+	
+	CALL	Wait1 ; Pause to prevent skew
+	
+	LOAD	Zero
+	OUT 	BEEP
 	
 	LOAD	MinDex
-	CALL	ResetXY
+	CALL	ResetXY ; Reset the current position so it is not reached again
 	
 	LOAD	NumMovements
 	ADD		One
 	STORE	NumMovements
-	SUB		One
-	JPOS	Die
+	SUB		Eleven
+	
+	JPOS	Die ; Leave if all of the positions have been reached
 	
 	JUMP	LoadPosition
 	
@@ -167,7 +290,6 @@ Die:
 	OUT    RVELCMD
 	OUT    SONAREN
 	LOAD   DEAD         ; An indication that we are dead
-	OUT    SSEG2
 Forever:
 	JUMP   Forever      ; Do this forever.
 	DEAD:  DW &HDEAD    ; Example of a "local" variable
@@ -189,29 +311,24 @@ StallLoop:
 ; Subroutine to move the amount of units stored in the AC
 MoveACUnits:
 	STORE	Distance
+	
 	IN		LPOS
 	STORE	StartPosL
 	IN		RPOS
 	STORE	StartPosR
 	
-CheckDir:
-	LOAD	Distance
-	JNEG	Reverse
-
-Forward:
 	LOAD	FFast
 	STORE	MoveACUnits_RSpeed
 	STORE	MoveACUnits_LSpeed
-	JUMP	CheckCurPos
-
-Reverse:
-	LOAD	RFast
-	STORE	MoveACUnits_RSpeed
-	STORE	MoveACUnits_LSpeed
-
+	
 CheckCurPos: ; for now just check left, maybe do both later
+	IN		XPOS
+	OUT		SSEG2
+	IN		YPOS
+	OUT		LCD	
+	
+CheckEnd:
 	IN		LPOS
-	OUT		LCD
 	SUB		StartPosL
 	SUB		Distance
 	JPOS	StopMotion
@@ -233,7 +350,7 @@ StopMotion:
 ; Subroutine to turn to the angle stored in AC
 TurnACDegrees:
 	STORE  DesTheta   ; store the turning angle
-	IN	   NowTheta
+	IN	   THETA
 	STORE  NowTheta
 	
 	SUB    DesTheta    ; subtract desired angle
@@ -244,9 +361,6 @@ TurnACDegrees:
 NeedLeft:
 	IN	   THETA
 	STORE  NowTheta    ; update current theta
-	
-	OUT	   LCD
-
 	LOAD   DesTheta
 	SUB    NowTheta    ; get the turn error
 	CALL   Mod360      ; fix errors around 0
@@ -259,13 +373,9 @@ TurnLeft:
 	OUT    LVELCMD     ; set left wheel backwards
 	JUMP   NeedLeft
 	RETURN               ; exit ISR
-	
 NeedRight:
 	IN	   THETA
 	STORE  NowTheta
-	
-	OUT	   LCD
-	
 	LOAD   NowTheta
 	SUB    DesTheta    ; get the turn error
 	CALL   Mod360      ; fix errors around 0
@@ -321,22 +431,24 @@ LoadYCoord:
 	ILOAD  temp
 	RETURN
 
-; Subroutine to load X coordinate at index in AC into AC
+; Subroutine to store X coordinate in AC at index XIdx
 StoreXCoord:
 	STORE  temp
 	LOAD   XCoords
-	ADD	   temp
-	STORE  temp
-	ISTORE temp
+	ADD	   XIdx
+	STORE  temp2
+	LOAD   temp
+	ISTORE temp2
 	RETURN
 
-; Subroutine to load Y coordinate at index in AC into AC
+; Subroutine to store Y coordinate in AC at index yIdx
 StoreYCoord:
 	STORE  temp
 	LOAD   YCoords
-	ADD	   temp
-	STORE  temp
-	ISTORE temp
+	ADD	   YIdx
+	STORE  temp2
+	LOAD   temp
+	ISTORE temp2
 	RETURN
 		
 ;***************************************************************
@@ -519,7 +631,6 @@ Wait1:
 	OUT    TIMER
 Wloop:
 	IN     LIN
-	OUT    SSEG2
 	IN     TIMER
 	OUT    XLEDS       ; User-feedback that a pause is occurring.
 	ADDI   -10         ; 1 second in 10Hz.
@@ -714,6 +825,7 @@ temp2:  DW 0
 moveangle: DW 0
 movedistance: DW 0
 NumMovements: DW 0
+ActiveLoadIdx:	DW 0
 
 ; Movement Function
 MoveACUnits_RSpeed:	DW 0
@@ -721,6 +833,7 @@ MoveACUnits_LSpeed:	DW 0
 StartPosL:	DW 0
 StartPosR:	DW 0
 Distance:	DW 0
+DiffPos:	DW 0
 
 ; Turning Function
 TurnAngle:	DW 0
@@ -774,7 +887,7 @@ XIdx:   DW 0
 YIdx:   DW 0
 
 XCoords:    DW 2000
-YCoords:	DW 2004
+YCoords:	DW 2012
 
 ;***************************************************************
 ;* Constants
@@ -799,6 +912,7 @@ negfive:	DW -5
 NegOneHalf:	DW -.5
 OneHalf:	DW .5
 Eleven:	  DW 11
+Twelve:		DW 12
 Sixteen:	  DW 16
 Seventeen: DW 17
 FortyFive:	DW 45
@@ -827,6 +941,7 @@ LowNibl:  DW &HF       ; 0000 0000 0000 1111
 ; some useful movement values
 OneMeter: DW 961       ; ~1m in 1.04mm units
 HalfMeter: DW 481      ; ~0.5m in 1.04mm units
+OneFoot:  DW 293       ; ~2ft in 1.04mm units
 TwoFeet:  DW 586       ; ~2ft in 1.04mm units
 Deg90:    DW 90        ; 90 degrees in odometer units
 DegN90:   DW -90        ; 90 degrees in odometer units
@@ -834,15 +949,15 @@ Deg180:   DW 180       ; 180
 DegN180:  DW -180      ; -180
 Deg270:   DW 270       ; 270
 Deg360:   DW 360       ; can never actually happen; for math only
-FSlow:    DW 100       ; 100 is about the lowest velocity value that will move
-RSlow:    DW -100
+FSlow:    DW 150       ; 100 is about the lowest velocity value that will move
+RSlow:    DW -150
 FMid:     DW 350       ; 350 is a medium speed
 RMid:     DW -350
 FFast:    DW 500       ; 500 is almost max speed (511 is max)
 RFast:    DW -500
 GigaMax:  DW 20000
 
-MinBatt:  DW 100       ; 10.0V - minimum safe battery voltage
+MinBatt:  DW 60       ; 10.0V - minimum safe battery voltage
 I2CWCmd:  DW &H1190    ; write one i2c byte, read one byte, addr 0x90
 I2CRCmd:  DW &H0190    ; write nothing, read one byte, addr 0x90
 
@@ -890,11 +1005,27 @@ RIN:      EQU &HC8
 LIN:      EQU &HC9
 
 ORG 2000
-DW 212 ; X Coords
-DW 335
-DW 514
-DW 234
-DW 356 ; Y Coords
-DW 419
-DW 503
-DW 320
+DW 0 ; X Coords
+DW 0
+DW 0
+DW 0
+DW 0 ; X Coords
+DW 0
+DW 0
+DW 0
+DW 0 ; X Coords
+DW 0
+DW 0
+DW 0
+DW 0 ; Y Coords
+DW 0
+DW 0
+DW 0
+DW 0 ; Y Coords
+DW 0
+DW 0
+DW 0
+DW 0 ; Y Coords
+DW 0
+DW 0
+DW 0
